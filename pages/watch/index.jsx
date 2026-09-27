@@ -333,16 +333,12 @@ const MoviePage = () => {
                 </div>
               )}
 
-              {director && (
-                <div>
-                  <h3 className="mb-2 text-[13px] font-semibold uppercase tracking-[0.14em] text-textsecondary">
-                    Director
-                  </h3>
-                  <p className="text-sm text-textprimary">{director.name}</p>
-                </div>
-              )}
-
-              <CastRow cast={cast} />
+              <CastRow
+                title="Cast & crew"
+                cast={cast}
+                crew={director ? [director] : []}
+                excludeKey={`movie-${movie?.id}`}
+              />
             </div>
           </section>
 

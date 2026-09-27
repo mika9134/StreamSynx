@@ -463,7 +463,12 @@ const EpisodePage = () => {
                     </p>
                   </div>
 
-                  <CastRow cast={cast} />
+                  <CastRow
+                    title="Cast & crew"
+                    cast={cast}
+                    crew={(show?.created_by || []).map((person) => ({ ...person, job: "Creator" }))}
+                    excludeKey={`tv-${show?.id}`}
+                  />
                 </div>
               </section>
             </div>
