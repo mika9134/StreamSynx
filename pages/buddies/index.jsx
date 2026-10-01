@@ -8,7 +8,6 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
-  arrayUnion,
   arrayRemove,
   collection,
   query,
@@ -34,7 +33,8 @@ import Link from "next/link";
 import { FiRefreshCw } from "react-icons/fi";
 import BuddyMatchCard from "../../components/BuddyMatchCard";
 import BuddyProfileModal from "../../components/BuddyProfileModal";
-import { discoverBuddies } from "../../lib/buddyDiscovery";
+import { discoverBuddies, profileMatch } from "../../lib/buddyDiscovery";
+import { acceptFriendRequest as acceptRequest, rejectFriendRequest as rejectRequest } from "../../lib/friends";
 import { readTastePicks } from "../../lib/tasteProfile";
 import { NUDGE_DISCOVER, markNudgeGoal } from "../../lib/nudges";
 
@@ -49,6 +49,7 @@ const UserListItem = ({
   onCancelRequest,
   isRequestSent,
   isLoading,
+  onOpenProfile,
 }) => {
   const handleAction = (action, userId) => {
     if (!isLoading) action(userId);
@@ -126,7 +127,12 @@ const UserListItem = ({
   return (
     // Themed list item background, border, hover
     <div className="flex items-center justify-between p-3 md:p-4 rounded-lg mb-3 bg-secondary border border-secondary-light shadow-sm hover:bg-secondary-light transition-colors duration-150 ease-in-out">
-      <div className="flex items-center overflow-hidden mr-3">
+      <button
+        type="button"
+        onClick={() => onOpenProfile?.(user)}
+        title={`View ${user.username || "their"} profile`}
+        className="group/profile flex min-w-0 items-center overflow-hidden mr-3 rounded-md text-left"
+      >
         <img
           src={
             user.avatar ||
@@ -136,10 +142,13 @@ const UserListItem = ({
           className="w-10 h-10 rounded-full mr-3 flex-shrink-0 border-2 border-secondary-light" // Added border
         />
         {/* Themed text */}
-        <p className="text-md font-medium text-textprimary truncate">
-          {user.username || "Unknown User"}
-        </p>
-      </div>
+        <span className="min-w-0">
+          <span className="block text-md font-medium text-textprimary truncate group-hover/profile:text-accent">
+            {user.username || "Unknown User"}
+          </span>
+          <span className="block text-[11px] text-textsecondary">View profile</span>
+        </span>
+      </button>
       {/* Buttons Section */}
       <div className="flex-shrink-0 flex items-center gap-2">
         {buttons.map((btn) => (
@@ -184,9 +193,13 @@ const BuddiesPage = () => {
   const userId = currentUser?.uid;
   const router = useRouter();
 
-  // Deep link from the profile page: /buddies?tab=discover
+  // Deep links: /buddies?tab=discover from the profile page,
+  // /buddies?tab=requests from the notifications menu.
   useEffect(() => {
-    if (router.isReady && router.query.tab === "discover") setActiveTab("discover");
+    if (!router.isReady) return;
+    if (["friends", "discover", "requests", "add"].includes(router.query.tab)) {
+      setActiveTab(router.query.tab);
+    }
   }, [router.isReady, router.query.tab]);
 
   // Someone who has found Discover never needs to be told about it again.
@@ -381,6 +394,34 @@ const BuddiesPage = () => {
     runDiscovery();
   }, [activeTab, loading, matchesLoaded, matchesLoading, runDiscovery]);
 
+  /**
+   * Opens anyone in the lists (friend, request, search result) in the same
+   * profile card Discover uses, scored against my own taste picks.
+   */
+  const openProfile = useCallback(
+    async (person) => {
+      if (!userId || !person?.uid) return;
+      try {
+        const [mySnap, theirSnap] = await Promise.all([
+          getDoc(doc(db, "users", userId)),
+          getDoc(doc(db, "users", person.uid)),
+        ]);
+        const mine = mySnap.exists() ? mySnap.data() : {};
+        const me = {
+          uid: userId,
+          tasteProfile: mine.tasteProfile || null,
+          tastePicks: readTastePicks(mine),
+        };
+        const theirs = theirSnap.exists() ? { uid: person.uid, ...theirSnap.data() } : person;
+        setOpenMatch(profileMatch(me, theirs));
+      } catch (error) {
+        console.error("Error opening profile:", error);
+        toast.error("Could not load that profile.");
+      }
+    },
+    [userId]
+  );
+
   // Interaction Handlers (Keep logic as is)
   const setLoadingState = (targetUserId, isLoading) => {
     setInteractionLoading((prev) => ({ ...prev, [targetUserId]: isLoading }));
@@ -427,23 +468,8 @@ const BuddiesPage = () => {
   const acceptFriendRequest = async (fromUserId) => {
     if (!userId) return;
     setLoadingState(fromUserId, true);
-    const requestId = `${fromUserId}_${userId}`;
     try {
-      await updateDoc(doc(db, "friendRequests", requestId), {
-        status: "accepted",
-      });
-      const currentUserFriendsRef = doc(db, "friends", userId);
-      await setDoc(
-        currentUserFriendsRef,
-        { friends: arrayUnion(fromUserId) },
-        { merge: true }
-      );
-      const senderFriendsRef = doc(db, "friends", fromUserId);
-      await setDoc(
-        senderFriendsRef,
-        { friends: arrayUnion(userId) },
-        { merge: true }
-      );
+      await acceptRequest(userId, fromUserId);
       toast.success("Friend request accepted!"); // Added toast
     } catch (error) {
       console.error("Error accepting friend request:", error);
@@ -455,12 +481,9 @@ const BuddiesPage = () => {
   const rejectFriendRequest = async (fromUserId) => {
     if (!userId) return;
     setLoadingState(fromUserId, true);
-    const requestId = `${fromUserId}_${userId}`;
     try {
-      await updateDoc(doc(db, "friendRequests", requestId), {
-        status: "rejected",
-      });
-      toast.info("Friend request rejected."); // Added toast
+      await rejectRequest(userId, fromUserId);
+      toast("Friend request rejected.");
     } catch (error) {
       console.error("Error rejecting friend request:", error);
       toast.error("Failed to reject request."); // Use toast
@@ -486,7 +509,7 @@ const BuddiesPage = () => {
       });
       const friendFriendsRef = doc(db, "friends", friendId);
       await updateDoc(friendFriendsRef, { friends: arrayRemove(userId) });
-      toast.info("Friend removed."); // Added toast
+      toast("Friend removed.");
     } catch (error) {
       console.error("Error unfriending user:", error);
       toast.error("Failed to unfriend user."); // Use toast
@@ -595,6 +618,7 @@ const BuddiesPage = () => {
                   onAccept={acceptFriendRequest}
                   onReject={rejectFriendRequest}
                   isLoading={interactionLoading[request.fromUserId]}
+                  onOpenProfile={openProfile}
                 />
               ))
             ) : (
@@ -650,6 +674,7 @@ const BuddiesPage = () => {
                       onCancelRequest={handleCancelFriendRequest}
                       isRequestSent={!!sentRequests[user.uid]}
                       isLoading={interactionLoading[user.uid]}
+                      onOpenProfile={openProfile}
                     />
                   );
                 })}
@@ -679,6 +704,7 @@ const BuddiesPage = () => {
                   type="friend"
                   onUnfriend={unfriendUser}
                   isLoading={interactionLoading[friend.uid]}
+                  onOpenProfile={openProfile}
                 />
               ))
             ) : (

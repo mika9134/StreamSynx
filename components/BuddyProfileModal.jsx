@@ -2,9 +2,10 @@
 // stats, the eight titles that represent them, why you two matched, and the
 // button that turns them into a buddy.
 import React, { useEffect } from "react";
+import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { IoClose } from "react-icons/io5";
-import { FiUserPlus, FiCheck, FiClock } from "react-icons/fi";
+import { FiUserPlus, FiCheck, FiClock, FiTv } from "react-icons/fi";
 import { MatchRing } from "./BuddyMatchCard";
 import { TastePicksStrip } from "./TastePicks";
 import { pickKey, genreNamesFor } from "../lib/tasteProfile";
@@ -40,10 +41,15 @@ const Stat = ({ label, value }) => (
 const BuddyProfileModal = ({ match, onClose, onAddFriend, requestSent, isFriend, isLoading }) => {
   useEffect(() => {
     document.body.style.overflow = "hidden";
+    const onKey = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
     return () => {
       document.body.style.overflow = "";
+      window.removeEventListener("keydown", onKey);
     };
-  }, []);
+  }, [onClose]);
 
   if (!match) return null;
 
@@ -52,13 +58,15 @@ const BuddyProfileModal = ({ match, onClose, onAddFriend, requestSent, isFriend,
   const stats = user.publicStats || {};
   const sharedKeys = new Set(sharedTitles.map(pickKey));
   const theirGenres = genreNamesFor(user.tasteProfile?.topGenres || []).slice(0, 4);
+  // Friends are opened without a Discover score when either side has no picks.
+  const scored = typeof percent === "number";
 
   const action = () => {
     if (isFriend) {
       return (
-        <span className="btn-ghost pointer-events-none">
-          <FiCheck className="h-4 w-4" /> Already buddies
-        </span>
+        <Link href="/rooms" className="btn-primary">
+          <FiTv className="h-4 w-4" /> Start a watch party
+        </Link>
       );
     }
     if (requestSent) {
@@ -116,7 +124,13 @@ const BuddyProfileModal = ({ match, onClose, onAddFriend, requestSent, isFriend,
                 {user.username || "Unknown viewer"}
               </h2>
               <p className="mt-0.5 text-xs font-medium uppercase tracking-wider text-accent">
-                {tier?.label}
+                {isFriend ? (
+                  <span className="inline-flex items-center gap-1">
+                    <FiCheck className="h-3 w-3" /> Your buddy
+                  </span>
+                ) : (
+                  tier?.label
+                )}
               </p>
               {theirGenres.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -128,7 +142,7 @@ const BuddyProfileModal = ({ match, onClose, onAddFriend, requestSent, isFriend,
                 </div>
               )}
             </div>
-            <MatchRing percent={percent} size={56} />
+            {scored && <MatchRing percent={percent} size={56} />}
             <button
               type="button"
               onClick={onClose}
@@ -142,7 +156,9 @@ const BuddyProfileModal = ({ match, onClose, onAddFriend, requestSent, isFriend,
           {/* Body */}
           <div className="custom-scrollbar flex-1 space-y-6 overflow-y-auto p-5">
             <section>
-              <h3 className="section-label mb-2.5">Why you match</h3>
+              <h3 className="section-label mb-2.5">
+                {isFriend ? "Your taste in common" : "Why you match"}
+              </h3>
               <ul className="space-y-1.5">
                 {reasons.map((reason) => (
                   <li key={reason.kind} className="flex gap-2 text-sm text-textsecondary">
@@ -152,7 +168,9 @@ const BuddyProfileModal = ({ match, onClose, onAddFriend, requestSent, isFriend,
                 ))}
                 {!reasons.length && (
                   <li className="text-sm text-textsecondary">
-                    Similar overall taste, no single standout overlap.
+                    {scored
+                      ? "Similar overall taste, no single standout overlap."
+                      : "Once you both pick the titles that represent you, you'll see what you have in common here."}
                   </li>
                 )}
               </ul>
@@ -177,7 +195,7 @@ const BuddyProfileModal = ({ match, onClose, onAddFriend, requestSent, isFriend,
                   </span>
                 )}
               </h3>
-              <TastePicksStrip picks={user.tastePicks} sharedKeys={sharedKeys} />
+              <TastePicksStrip picks={user.tastePicks} sharedKeys={sharedKeys} linkToWatch />
             </section>
 
             <section>
@@ -199,7 +217,9 @@ const BuddyProfileModal = ({ match, onClose, onAddFriend, requestSent, isFriend,
           {/* Footer */}
           <div className="flex items-center justify-between gap-3 border-t border-white/[0.06] p-4">
             <p className="text-xs text-textsecondary">
-              Add them to start a watch party together.
+              {isFriend
+                ? "Tap any title to watch it."
+                : "Add them to start a watch party together."}
             </p>
             {action()}
           </div>

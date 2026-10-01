@@ -6,8 +6,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { FiSearch, FiMenu, FiX, FiLogOut, FiUser } from "react-icons/fi";
 import toast from "react-hot-toast";
 import SearchModal from "./SearchModal";
+import NotificationsList from "./NotificationsList";
 import { auth } from "../firebase";
 import { loginHref, useAuth } from "../lib/auth";
+import { useNotifications } from "../lib/notifications";
 
 const PRIMARY_LINKS = [
   { name: "Home", path: "/" },
@@ -40,6 +42,18 @@ function NavBar() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const accountRef = useRef(null);
+  const { items: notifications, unreadKeys, unreadCount, markAllSeen } = useNotifications(user?.uid);
+  // What was new when the menu opened — stays highlighted while it's open,
+  // even though opening it marks everything as seen.
+  const [highlightKeys, setHighlightKeys] = useState(() => new Set());
+
+  const toggleAccount = () => {
+    if (!accountOpen) {
+      setHighlightKeys(unreadKeys);
+      if (unreadCount) markAllSeen();
+    }
+    setAccountOpen(!accountOpen);
+  };
 
   const isActive = (path) =>
     path === "/" ? router.pathname === "/" : router.pathname.startsWith(path);
@@ -177,12 +191,21 @@ function NavBar() {
               <div className="relative" ref={accountRef}>
                 <button
                   type="button"
-                  onClick={() => setAccountOpen((open) => !open)}
-                  aria-label="Account menu"
+                  onClick={toggleAccount}
+                  aria-label={
+                    unreadCount
+                      ? `Account menu, ${unreadCount} new notification${unreadCount === 1 ? "" : "s"}`
+                      : "Account menu"
+                  }
                   aria-expanded={accountOpen}
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-accent/15 text-sm font-semibold text-accent ring-1 ring-inset ring-accent/25 transition-all hover:bg-accent/25"
+                  className="relative flex h-9 w-9 items-center justify-center rounded-full bg-accent/15 text-sm font-semibold text-accent ring-1 ring-inset ring-accent/25 transition-all hover:bg-accent/25"
                 >
                   {initial}
+                  {unreadCount > 0 && (
+                    <span className="absolute -right-1.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-primary">
+                      {unreadCount > 9 ? "9+" : unreadCount}
+                    </span>
+                  )}
                 </button>
 
                 <AnimatePresence>
@@ -192,12 +215,18 @@ function NavBar() {
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -6, scale: 0.97 }}
                       transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                      className="glass-card-elevated absolute right-0 mt-2 w-60 overflow-hidden p-1.5"
+                      className="glass-card-elevated absolute right-0 mt-2 w-[min(20rem,calc(100vw-2rem))] overflow-hidden p-1.5"
                     >
                       <div className="px-3 py-2.5">
                         <p className="truncate text-sm font-medium text-textprimary">{displayName}</p>
                         <p className="truncate text-xs text-textsecondary">{user.email}</p>
                       </div>
+                      <div className="my-1 h-px bg-white/[0.06]" />
+                      <NotificationsList
+                        uid={user.uid}
+                        items={notifications}
+                        highlightKeys={highlightKeys}
+                      />
                       <div className="my-1 h-px bg-white/[0.06]" />
                       {LIBRARY_LINKS.map((link) => (
                         <Link

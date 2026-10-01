@@ -5,8 +5,9 @@ import React, { useCallback, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { FiPlus, FiX } from "react-icons/fi";
 import toast from "react-hot-toast";
+import Link from "next/link";
 import TastePicker from "./TastePicker";
-import { posterUrl } from "../lib/tmdb";
+import { posterUrl, watchHref } from "../lib/tmdb";
 import { NUDGE_TASTE, markNudgeGoal } from "../lib/nudges";
 import {
   MAX_PICKS_PER_TYPE,
@@ -78,7 +79,7 @@ const EmptySlot = ({ label, onClick }) => (
  * Read-only picks, used on other people's profiles. `sharedKeys` highlights the
  * titles the viewer picked too, which is the whole point of showing them.
  */
-export const TastePicksStrip = ({ picks, sharedKeys = new Set(), compact = false }) => {
+export const TastePicksStrip = ({ picks, sharedKeys = new Set(), compact = false, linkToWatch = false }) => {
   const all = [...(picks?.movies || []), ...(picks?.shows || [])];
 
   if (!all.length) {
@@ -87,9 +88,21 @@ export const TastePicksStrip = ({ picks, sharedKeys = new Set(), compact = false
 
   return (
     <div className={`grid gap-3 ${compact ? "grid-cols-4" : "grid-cols-4 sm:grid-cols-8"}`}>
-      {all.map((pick) => (
-        <PickTile key={pickKey(pick)} pick={pick} highlight={sharedKeys.has(pickKey(pick))} />
-      ))}
+      {all.map((pick) => {
+        const tile = <PickTile pick={pick} highlight={sharedKeys.has(pickKey(pick))} />;
+        return linkToWatch ? (
+          <Link
+            key={pickKey(pick)}
+            href={watchHref({ id: pick.id, media_type: pick.type })}
+            title={`Watch ${pick.title}`}
+            className="block transition-transform duration-200 hover:-translate-y-0.5"
+          >
+            {tile}
+          </Link>
+        ) : (
+          <React.Fragment key={pickKey(pick)}>{tile}</React.Fragment>
+        );
+      })}
     </div>
   );
 };
