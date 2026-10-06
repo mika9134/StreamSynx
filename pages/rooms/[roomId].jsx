@@ -23,7 +23,8 @@ import {
   set,
   serverTimestamp,
   remove,
-  get
+  get,
+  push,
 } from "firebase/database";
 import NavBar from "../../components/NavBar"; // Adjust path
 import Footer from "../../components/Footer"; // Adjust path
@@ -41,8 +42,12 @@ import {
   FaPlay,
   FaStar,
   FaSpinner, // Using Spinner for debouncing indicator
+  FaLayerGroup,
 } from "react-icons/fa";
 import { motion, AnimatePresence } from "framer-motion";
+import GroupPickModal from "../../components/GroupPickModal";
+import { groupPickRef, isActive, markPlayed } from "../../lib/groupPickStore";
+import { chatSystemText, toRoomMedia } from "../../lib/groupPick";
 
 // --- Constants and Helpers ---
 const IMAGE_BASE_URL_W500 = "https://image.tmdb.org/t/p/w500";
@@ -88,6 +93,11 @@ const RoomPage = () => {
   // Mirror of membersList for the room snapshot handler, whose closure would
   // otherwise always see the initial empty list and refetch every member.
   const membersListRef = useRef([]);
+
+  // Group Pick: the live session doc, and whether this member has the panel open.
+  const [groupPick, setGroupPick] = useState(null);
+  const [groupPickOpen, setGroupPickOpen] = useState(false);
+  const dismissedSessionRef = useRef(null);
   useEffect(() => {
     membersListRef.current = membersList;
   }, [membersList]);
@@ -228,6 +238,38 @@ const RoomPage = () => {
 
     return () => unsubscribe();
   }, [roomId, currentUser, authLoading, router]); // Added membersList to dependencies was incorrect, caused loops. Removed it.
+
+  // --- Group Pick session (Firestore) ---
+  useEffect(() => {
+    if (!roomId || !isMember) return undefined;
+    let lastStatus = null;
+    let lastPlayed = false;
+    const unsubscribe = onSnapshot(
+      groupPickRef(roomId),
+      (snap) => {
+        // Estimate pending server timestamps so the host heartbeat never reads as 0.
+        const data = snap.exists() ? snap.data({ serverTimestamps: "estimate" }) : null;
+        setGroupPick(data);
+        const status = data?.status || null;
+        const wantsAttention =
+          isActive(data) || (status === "done" && !data.playedAt);
+        if (wantsAttention && data.sessionId !== dismissedSessionRef.current) {
+          setGroupPickOpen(true);
+        }
+        // The creator hit play: close everyone's panel, the player takes over.
+        if (status === "done" && data.playedAt && lastStatus === "done" && !lastPlayed) {
+          setGroupPickOpen(false);
+        }
+        if (status === "cancelled" && lastStatus && lastStatus !== "cancelled") {
+          toast(data.error === "not-enough-titles" ? "Group Pick couldn't find enough titles." : "Group Pick cancelled.");
+        }
+        lastStatus = status;
+        lastPlayed = Boolean(data?.playedAt);
+      },
+      (err) => console.error("Error listening to Group Pick:", err)
+    );
+    return () => unsubscribe();
+  }, [roomId, isMember]);
 
   // --- Fetch TV Show Details & Episodes ---
   useEffect(() => {
@@ -455,7 +497,7 @@ const RoomPage = () => {
       !roomData ||
       currentUser.uid !== roomData.createdBy
     )
-      return;
+      return false;
     const roomDocRef = doc(db, "rooms", roomId);
     const mediaType = media.media_type === "tv" ? "tv" : "movie";
     const mediaId = media.id;
@@ -486,14 +528,43 @@ const RoomPage = () => {
       setSelectedSeason(null);
       setSelectedEpisode(null);
       setEpisodes([]);
+      return true;
     } catch (error) {
       console.error("Error updating media:", error);
       toast.error(`Failed to update room media: ${error.message}`, {
         id: selectToastId,
       });
       setIsSearchingMedia(false); // Ensure loading stops on error
+      return false;
     }
   };
+
+  // --- Group Pick: load the winner into the room (creator only) ---
+  const handlePlayGroupPick = async (item, result) => {
+    const ok = await handleSelectMedia(toRoomMedia(item));
+    if (!ok) return false;
+    try {
+      await push(ref(rtdb, `roomChats/${roomId}/messages`), {
+        type: "system",
+        kind: "groupPick",
+        text: chatSystemText(item, result),
+        userId: currentUser.uid,
+        username: currentUser.displayName || "Room",
+        timestamp: serverTimestamp(),
+      });
+      await markPlayed(roomId, currentUser.uid);
+    } catch (error) {
+      // The media is already set; a missing chat line shouldn't block playback.
+      console.error("Error recording Group Pick result:", error);
+    }
+    setGroupPickOpen(false);
+    return true;
+  };
+
+  const closeGroupPick = useCallback(() => {
+    dismissedSessionRef.current = groupPick?.sessionId || null;
+    setGroupPickOpen(false);
+  }, [groupPick?.sessionId]);
 
   // --- TV Season/Episode Selection ---
   const handleSeasonChange = async (seasonNumber) => {
@@ -957,6 +1028,17 @@ const handleRemoveMember = async (memberUidToRemove) => {
             )}
             <motion.button
               whileTap={{ scale: 0.95 }}
+              onClick={() => setGroupPickOpen(true)}
+              className="bg-accent hover:bg-accent-hover text-primary font-semibold py-1.5 px-3 rounded-lg transition-colors text-sm flex items-center gap-1.5 shadow-glow"
+            >
+              <FaLayerGroup />
+              {isActive(groupPick) ? "Join Group Pick" : "Group Pick"}
+              {isActive(groupPick) && (
+                <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+              )}
+            </motion.button>
+            <motion.button
+              whileTap={{ scale: 0.95 }}
               onClick={handleLeaveRoom}
               className="bg-red-600/20 hover:bg-red-600/40 text-red-400 font-semibold py-1.5 px-3 rounded-lg transition-colors text-sm flex items-center gap-1.5"
               title={
@@ -1066,6 +1148,13 @@ const handleRemoveMember = async (memberUidToRemove) => {
                       Use the search below to select media.
                     </p>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setGroupPickOpen(true)}
+                    className="btn-ghost mt-4 text-sm"
+                  >
+                    Can't decide? Start a Group Pick
+                  </button>
                 </div>
               )}
             </motion.div>
@@ -1329,6 +1418,16 @@ const handleRemoveMember = async (memberUidToRemove) => {
         </div>{" "}
         {/* End Main Content Flex */}
       </main>
+      <GroupPickModal
+        roomId={roomId}
+        room={roomData}
+        members={membersList}
+        session={groupPick}
+        currentUser={currentUser}
+        open={groupPickOpen}
+        onClose={closeGroupPick}
+        onPlay={handlePlayGroupPick}
+      />
       <Footer />
     </div>
   );

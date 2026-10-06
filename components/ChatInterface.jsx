@@ -120,6 +120,13 @@ const ChatInterface = ({ roomId }) => {
                     <p className="text-sm text-textsecondary text-center py-4">No messages yet. Start chatting!</p>
                 )}
                 {messages.map(msg => {
+                    if (msg.type === 'system') {
+                        return (
+                            <div key={msg.id} className="flex justify-center">
+                                <span className="chip chip-active max-w-[90%] text-center text-xs">{msg.text}</span>
+                            </div>
+                        );
+                    }
                     const timestampDate = typeof msg.timestamp === 'number' ? new Date(msg.timestamp) : null;
                     const isCurrentUser = msg.userId === currentUser?.uid;
                     const displayUsername = usernameMap[msg.userId] || msg.username || 'Anonymous';

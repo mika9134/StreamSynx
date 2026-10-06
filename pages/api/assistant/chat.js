@@ -198,7 +198,7 @@ const extractJson = (text) => {
  * never gets to the JSON. Gateways that reject those fields answer 400, and
  * the caller retries the same model without them.
  */
-const callModel = async (model, messages, origin, { strict = true } = {}) => {
+const callModel = async (model, messages, origin, { strict = true, maxTokens = MAX_OUTPUT_TOKENS } = {}) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
   try {
@@ -216,7 +216,7 @@ const callModel = async (model, messages, origin, { strict = true } = {}) => {
         model,
         messages,
         temperature: 0.7,
-        max_tokens: MAX_OUTPUT_TOKENS,
+        max_tokens: maxTokens,
         ...(strict
           ? { response_format: { type: "json_object" }, reasoning: { enabled: false, exclude: true } }
           : {}),
@@ -256,7 +256,7 @@ const RETRY_DELAY_MS = 600;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const complete = async (messages, origin) => {
+const complete = async (messages, origin, { requirePicks = true, maxTokens } = {}) => {
   const models = MODELS.length ? MODELS : DEFAULT_MODELS;
   let lastError = null;
   // An answer with a reply but no picks is kept in reserve: better than an
@@ -271,10 +271,10 @@ const complete = async (messages, origin) => {
       try {
         let answer;
         try {
-          answer = await callModel(model, messages, origin, { strict: true });
+          answer = await callModel(model, messages, origin, { strict: true, maxTokens });
         } catch (error) {
           if (error.status !== 400) throw error;
-          answer = await callModel(model, messages, origin, { strict: false });
+          answer = await callModel(model, messages, origin, { strict: false, maxTokens });
         }
 
         const parsed = extractJson(answer.text);
@@ -287,7 +287,7 @@ const complete = async (messages, origin) => {
           error.retryable = true;
           throw error;
         }
-        if (!Array.isArray(parsed.picks) || !parsed.picks.length) {
+        if (requirePicks && (!Array.isArray(parsed.picks) || !parsed.picks.length)) {
           replyOnly = replyOnly || { parsed, model: answer.model };
           const error = new Error(`${model} answered without picks`);
           error.retryable = true;
@@ -307,6 +307,65 @@ const complete = async (messages, origin) => {
 
   if (replyOnly) return replyOnly;
   throw lastError || new Error("No model answered");
+};
+
+/* ------------------------------ Group Pick -------------------------------- */
+
+// A watch room picked a title together (lib/groupPick.js); Cue writes one
+// line on why it suits the group. Only titles, genres and numbers come in.
+const GROUP_PICK_MAX_TOKENS = 300;
+const GROUP_PICK_MAX_WORDS = 28;
+
+const clip = (value, max) => String(value ?? "").slice(0, max);
+const clipList = (list, count, max) =>
+  (Array.isArray(list) ? list : []).slice(0, count).map((entry) => clip(entry, max));
+
+const sanitizeGroupPick = (raw = {}) => ({
+  title: clip(raw.title, 120),
+  year: clip(raw.year, 4),
+  type: raw.mediaType === "tv" ? "series" : "film",
+  genres: clipList(raw.genres, 4, 30),
+  overview: clip(raw.overview, 200),
+  sharedTraits: clipList(raw.sharedTraits, 6, 40),
+  members: (Array.isArray(raw.members) ? raw.members : []).slice(0, 12).map((member) => ({
+    name: clip(member?.name, 30),
+    fitPercent: Number.isFinite(member?.fit) ? Math.max(0, Math.min(100, Math.round(member.fit))) : null,
+    vote: ["yes", "no"].includes(member?.vote) ? member.vote : null,
+  })),
+  runnersUp: clipList(raw.runnersUp, 2, 120),
+  method: raw.method === "fit-only" ? "fit-only" : "votes+fit",
+});
+
+const groupPickPrompt = (name, pick) => `You are ${name}, the assistant inside StreamSynx. A group in a watch-party room just picked a ${pick.type} together. The rule: each title is scored by how happy its least-happy member would be (from their yes/no swipes and how well it fits their taste), so nobody gets stuck with something they hate.
+
+Write ONE sentence, at most ${GROUP_PICK_MAX_WORDS} words, telling the room why "${pick.title}"${pick.year ? ` (${pick.year})` : ""} is the fair pick. Mention a trait they share if there is one. If someone voted no, be honest about it. Use only the facts below: no other titles, no lists, no emojis.
+
+Facts: ${JSON.stringify(pick)}
+
+Reply with ONLY {"reply": "..."}. The first character must be "{".`;
+
+const explainGroupPick = async (req, res) => {
+  const name = String(req.body.name || "Cue").slice(0, 40);
+  const pick = sanitizeGroupPick(req.body.groupPick);
+  if (!pick.title) {
+    res.status(400).json({ error: "Missing the winning title." });
+    return;
+  }
+  const origin = req.headers.origin || `https://${req.headers.host || "streamsynx.app"}`;
+  try {
+    const { parsed, model } = await complete(
+      [
+        { role: "system", content: groupPickPrompt(name, pick) },
+        { role: "user", content: "Explain the pick." },
+      ],
+      origin,
+      { requirePicks: false, maxTokens: GROUP_PICK_MAX_TOKENS }
+    );
+    res.status(200).json({ reply: String(parsed.reply || "").trim().slice(0, 240), model });
+  } catch (error) {
+    console.error("Assistant: group pick explanation failed —", error.message);
+    res.status(error.status === 429 ? 429 : 502).json({ error: "No explanation right now." });
+  }
 };
 
 /* --------------------------------- TMDB ----------------------------------- */
@@ -415,6 +474,11 @@ export default async function handler(req, res) {
   }
   if (throttled(user.uid)) {
     res.status(429).json({ error: "That's a lot of asks — give it a little while and try again." });
+    return;
+  }
+
+  if (req.body?.mode === "groupPick") {
+    await explainGroupPick(req, res);
     return;
   }
 
