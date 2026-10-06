@@ -14,6 +14,7 @@ import {
   where,
   getDocs,
   limit,
+  runTransaction,
 } from "firebase/firestore";
 import {
   ref,
@@ -84,6 +85,12 @@ const RoomPage = () => {
   const [error, setError] = useState(null);
   const [isMember, setIsMember] = useState(false);
   const [membersList, setMembersList] = useState([]);
+  // Mirror of membersList for the room snapshot handler, whose closure would
+  // otherwise always see the initial empty list and refetch every member.
+  const membersListRef = useRef([]);
+  useEffect(() => {
+    membersListRef.current = membersList;
+  }, [membersList]);
 
   // Media Search State (Creator only)
   const [searchQuery, setSearchQuery] = useState("");
@@ -176,7 +183,7 @@ const RoomPage = () => {
           if (data.members && Array.isArray(data.members)) {
             try {
               // Optimization: Only refetch if member list actually changed
-              const currentMemberIds = membersList
+              const currentMemberIds = membersListRef.current
                 .map((m) => m.uid)
                 .sort()
                 .join(",");
@@ -627,7 +634,7 @@ const RoomPage = () => {
         });
 
         // Client-side filtering (case-insensitive startsWith) AND exclude existing members
-        const currentMemberIds = roomData?.memberIds || [];
+        const currentMemberIds = roomData?.members || [];
         const filteredUsers = friendsData.filter(
           (user) =>
             user.username?.toLowerCase().startsWith(lowerCaseQuery) &&
@@ -642,7 +649,7 @@ const RoomPage = () => {
         setIsSearchingUsers(false);
       }
     },
-    [currentUser, roomData?.createdBy, roomData?.memberIds, currentUserFriends]
+    [currentUser, roomData?.createdBy, roomData?.members, currentUserFriends]
   ); // Dependencies
 
   const handleUserSearchInputChange = (e) => {
@@ -697,7 +704,7 @@ const RoomPage = () => {
          }
     } catch (addError) {
         console.error("Error adding member:", addError);
-        toast.success(`${userToAdd.username || "User"} added.`);
+        toast.error(`Failed to add ${userToAdd.username || "user"}.`);
     }
 };
 const handleRemoveMember = async (memberUidToRemove) => {
@@ -740,14 +747,19 @@ const handleRemoveMember = async (memberUidToRemove) => {
 
     } catch (err) {
         console.error("Error removing member:", err);
-        toast.success(`${memberUsername} removed.`, { id: removingToast }); // Show error message
+        toast.error(`Failed to remove ${memberUsername}.`, { id: removingToast });
     }
 };
   const handleLeaveRoom = async () => {
     if (!roomId || !currentUser || !roomData) return;
     const isCreator = currentUser.uid === roomData.createdBy;
+    const others = (roomData.members || []).filter((uid) => uid !== currentUser.uid);
+    if (isCreator && others.length === 0) {
+      toast.error("You're the only member. Delete the room instead.");
+      return;
+    }
     const confirmMsg = isCreator
-      ? "Leaving as creator might delete the room. Are you sure?"
+      ? "You created this room. If you leave, a random member becomes the new creator. Leave?"
       : "Are you sure?";
     if (!window.confirm(confirmMsg)) return;
     const roomDocRef = doc(db, "rooms", roomId);
@@ -757,21 +769,34 @@ const handleRemoveMember = async (memberUidToRemove) => {
     );
     const leavingToast = toast.loading("Leaving room...");
     try {
-      if (!isCreator) {
-        await updateDoc(roomDocRef, {
-          memberIds: arrayRemove(currentUser.uid),
-        });
-      } else {
-        toast.error("Creators cannot leave. Delete room instead.");
-        toast.dismiss(leavingToast);
-        return;
-      }
+      // Transaction so the new creator is drawn from the members list as it is
+      // right now, not from a possibly stale snapshot.
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(roomDocRef);
+        if (!snap.exists()) return;
+        const data = snap.data();
+        const patch = { members: arrayRemove(currentUser.uid) };
+        if (data.createdBy === currentUser.uid) {
+          const remaining = (data.members || []).filter((uid) => uid !== currentUser.uid);
+          if (remaining.length === 0) throw new Error("last-member");
+          const nextCreator = remaining[Math.floor(Math.random() * remaining.length)];
+          const nextSnap = await tx.get(doc(db, "users", nextCreator));
+          patch.createdBy = nextCreator;
+          patch.createdByUsername = nextSnap.exists()
+            ? nextSnap.data().username || "Anonymous"
+            : "Anonymous";
+        }
+        tx.update(roomDocRef, patch);
+      });
       await remove(userStatusRef);
       toast.success("Left the room.", { id: leavingToast });
       router.push("/rooms");
     } catch (err) {
       console.error("Error leaving room:", err);
-      toast.error("Failed to leave.", { id: leavingToast });
+      const msg = err.message === "last-member"
+        ? "You're the only member. Delete the room instead."
+        : "Failed to leave.";
+      toast.error(msg, { id: leavingToast });
     }
   };
 
@@ -933,12 +958,11 @@ const handleRemoveMember = async (memberUidToRemove) => {
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={handleLeaveRoom}
-              disabled={isCreator}
-              className={`bg-red-600/20 hover:bg-red-600/40 text-red-400 font-semibold py-1.5 px-3 rounded-lg transition-colors text-sm flex items-center gap-1.5 ${
-                isCreator ? "opacity-50 cursor-not-allowed" : ""
-              }`}
+              className="bg-red-600/20 hover:bg-red-600/40 text-red-400 font-semibold py-1.5 px-3 rounded-lg transition-colors text-sm flex items-center gap-1.5"
               title={
-                isCreator ? "Creators cannot leave directly" : "Leave Room"
+                isCreator
+                  ? "Leave Room (a random member becomes creator)"
+                  : "Leave Room"
               }
             >
               <FaSignOutAlt /> Leave
