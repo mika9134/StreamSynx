@@ -337,7 +337,7 @@ const Intro = ({ mode, setMode, onStart, starting, solo, error }) => (
   </div>
 );
 
-const TasteChips = ({ groupTaste }) => {
+export const TasteChips = ({ groupTaste }) => {
   if (!groupTaste) return null;
   if (!groupTaste.chips?.length) {
     return (
@@ -387,7 +387,7 @@ const Building = ({ session, canCancel, onCancel }) => (
 const fitBarClass = (fit) =>
   fit >= 0.6 ? "bg-accent" : fit >= 0.35 ? "bg-accent-secondary" : "bg-textsecondary/50";
 
-const Results = ({ session, usernames, isCreator, creatorName, onPlay, onRunAgain, onClose, playing }) => {
+export const Results = ({ session, usernames, isCreator, creatorName, onPlay, onRunAgain, onClose, playing }) => {
   const { result, shortlist = [] } = session;
   const winner = shortlist.find((item) => item.key === result?.winnerKey);
   if (!winner) return null;

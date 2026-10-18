@@ -97,6 +97,8 @@ const RoomPage = () => {
   // Group Pick: the live session doc, and whether this member has the panel open.
   const [groupPick, setGroupPick] = useState(null);
   const [groupPickOpen, setGroupPickOpen] = useState(false);
+  // True when Firestore rules refuse the groupPick subcollection.
+  const [groupPickBlocked, setGroupPickBlocked] = useState(false);
   const dismissedSessionRef = useRef(null);
   useEffect(() => {
     membersListRef.current = membersList;
@@ -266,7 +268,15 @@ const RoomPage = () => {
         lastStatus = status;
         lastPlayed = Boolean(data?.playedAt);
       },
-      (err) => console.error("Error listening to Group Pick:", err)
+      (err) => {
+        if (err.code === "permission-denied") {
+          // Missing Firestore rule for rooms/{id}/groupPick: the room still works.
+          console.warn("Group Pick is blocked by Firestore rules (rooms/{roomId}/groupPick).");
+          setGroupPickBlocked(true);
+          return;
+        }
+        console.error("Error listening to Group Pick:", err);
+      }
     );
     return () => unsubscribe();
   }, [roomId, isMember]);
@@ -559,6 +569,14 @@ const RoomPage = () => {
     }
     setGroupPickOpen(false);
     return true;
+  };
+
+  const openGroupPick = () => {
+    if (groupPickBlocked) {
+      toast.error("Group Pick needs a Firestore rule for rooms/{roomId}/groupPick. Ask the app owner to add it.");
+      return;
+    }
+    setGroupPickOpen(true);
   };
 
   const closeGroupPick = useCallback(() => {
@@ -1028,7 +1046,7 @@ const handleRemoveMember = async (memberUidToRemove) => {
             )}
             <motion.button
               whileTap={{ scale: 0.95 }}
-              onClick={() => setGroupPickOpen(true)}
+              onClick={openGroupPick}
               className="bg-accent hover:bg-accent-hover text-primary font-semibold py-1.5 px-3 rounded-lg transition-colors text-sm flex items-center gap-1.5 shadow-glow"
             >
               <FaLayerGroup />
@@ -1150,7 +1168,7 @@ const handleRemoveMember = async (memberUidToRemove) => {
                   )}
                   <button
                     type="button"
-                    onClick={() => setGroupPickOpen(true)}
+                    onClick={openGroupPick}
                     className="btn-ghost mt-4 text-sm"
                   >
                     Can't decide? Start a Group Pick
