@@ -338,7 +338,7 @@ const sanitizeGroupPick = (raw = {}) => ({
 
 const groupPickPrompt = (name, pick) => `You are ${name}, the assistant inside StreamSynx. A group in a watch-party room just picked a ${pick.type} together. The rule: each title is scored by how happy its least-happy member would be (from their yes/no swipes and how well it fits their taste), so nobody gets stuck with something they hate.
 
-Write ONE sentence, at most ${GROUP_PICK_MAX_WORDS} words, telling the room why "${pick.title}"${pick.year ? ` (${pick.year})` : ""} is the fair pick. Mention a trait they share if there is one. If someone voted no, be honest about it. Use only the facts below: no other titles, no lists, no emojis.
+Write ONE sentence, at most ${GROUP_PICK_MAX_WORDS} words, telling the room why "${pick.title}"${pick.year ? ` (${pick.year})` : ""} is the fair pick. Mention a trait they share only if "sharedTraits" lists one; if it is empty, do not claim the group shares any taste or preference. If someone voted no, be honest about it. Use only the facts below: no other titles, no lists, no emojis.
 
 Facts: ${JSON.stringify(pick)}
 

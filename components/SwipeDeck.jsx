@@ -200,7 +200,8 @@ const SwipeDeck = ({ items, myVotes = {}, onVote, voterStatus = [], waitingOnNam
       </p>
 
       {top ? (
-        <div className="relative mb-16 aspect-[2/3] w-full max-w-[280px]">
+        // data-arrow-keys tells TvRemoteNavigation to leave ← / → to the deck.
+        <div className="relative mb-16 aspect-[2/3] w-full max-w-[280px]" data-arrow-keys="swipe">
           {behind.slice(0, 2).reverse().map((item, index, list) => {
             const depth = list.length - index;
             return (

@@ -196,6 +196,14 @@ export default function TvRemoteNavigation() {
         return;
       }
 
+      // A swipe deck on screen (Group Pick) uses ← / → to vote; leave them to it.
+      if (
+        (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+        document.querySelector('[data-arrow-keys="swipe"]')
+      ) {
+        return;
+      }
+
       const nextElement = findNextFocusable(activeElement, event.key);
       if (!nextElement) {
         return;

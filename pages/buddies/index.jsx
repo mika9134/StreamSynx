@@ -318,13 +318,26 @@ const BuddiesPage = () => {
       }
       if (!userId) return;
       const lowerCaseQuery = trimmedQuery.toLowerCase();
-      const usersQuery = query(collection(db, "users"), limit(100));
+      // Prefix search in Firestore itself, so every user is reachable, not
+      // only whoever happens to be in the first 100 documents. The unordered
+      // scan stays as a fallback for old accounts without username_lowercase.
+      const prefixQuery = query(
+        collection(db, "users"),
+        where("username_lowercase", ">=", lowerCaseQuery),
+        where("username_lowercase", "<=", `${lowerCaseQuery}\uf8ff`),
+        limit(20)
+      );
+      const scanQuery = query(collection(db, "users"), limit(100));
       try {
-        const usersSnapshot = await getDocs(usersQuery);
-        const allFetchedUsers = usersSnapshot.docs.map((doc) => ({
-          uid: doc.id,
-          ...doc.data(),
-        }));
+        const [prefixSnapshot, scanSnapshot] = await Promise.all([
+          getDocs(prefixQuery),
+          getDocs(scanQuery),
+        ]);
+        const byUid = new Map();
+        [...prefixSnapshot.docs, ...scanSnapshot.docs].forEach((doc) => {
+          if (!byUid.has(doc.id)) byUid.set(doc.id, { uid: doc.id, ...doc.data() });
+        });
+        const allFetchedUsers = [...byUid.values()];
         const filteredResults = allFetchedUsers.filter((user) => {
           const isCurrentUser = user.uid === userId;
           const usernameString = user.username || "";
