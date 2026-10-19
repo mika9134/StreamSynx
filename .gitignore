@@ -38,3 +38,7 @@ android-tv/local.properties
 serviceAccountKey.json
 *serviceAccount*.json
 scripts/backups/
+
+# browser tests: screenshots and local test-user passwords
+e2e/shots/
+e2e/.creds.json

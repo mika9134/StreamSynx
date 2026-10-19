@@ -3,7 +3,10 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev --webpack",
-    "start": "next start"
+    "start": "next start",
+    "test": "node --import ./tests/register.mjs --test tests/",
+    "test:e2e": "node e2e/group-pick.mjs",
+    "test:e2e:setup": "node e2e/setup-accounts.mjs"
   },
   "dependencies": {
     "@fontsource/dm-serif-display": "^5.1.1",
@@ -29,6 +32,7 @@
   },
   "devDependencies": {
     "autoprefixer": "^10.4.20",
+    "playwright-core": "^1.64.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",
     "tailwindcss-scrollbar": "^0.1.0"
