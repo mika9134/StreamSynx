@@ -8,6 +8,7 @@ Next.js 16 (pages router) + React 18, Firebase (Auth, Firestore, Realtime Databa
 - `npm run build`: production build; needs the env vars below or Firebase init fails while collecting page data
 - `npm test`: unit tests in `tests/` (Node test runner; `tests/loader.mjs` stubs Firebase/axios so `lib/*.js` runs in plain Node, no network)
 - `npm run test:e2e`: browser test of rooms + live Group Pick + Leave, two users in Playwright (needs `npm run dev` running). Run `npm run test:e2e:setup` once to create and befriend the test users. Screenshots go to `e2e/shots/`.
+- `node e2e/group-pick-edge.mjs`: Group Pick edge cases (solo + series, race, host leaves, nobody votes, clock skew), about 8 minutes. `E2E_ONLY=5` runs one scenario.
 
 ## Environment
 

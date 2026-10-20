@@ -17,6 +17,7 @@ import { rtdb } from "../firebase";
 import SwipeDeck from "./SwipeDeck";
 import { explainGroupPick, loadSeenKeys } from "../lib/assistant";
 import { fetchUserTaste } from "../lib/tasteProfile";
+import { serverNow } from "../lib/serverClock";
 import { posterUrl } from "../lib/tmdb";
 import {
   CHECK_TIMEOUT_MS,
@@ -83,12 +84,12 @@ const useOnlineUids = (roomId) => {
   return online;
 };
 
-/** A clock that ticks while `active`, for countdowns and timeout checks. */
+/** The server's clock, ticking while `active`, for countdowns and timeout checks. */
 const useNow = (active, interval = 1000) => {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => serverNow());
   useEffect(() => {
     if (!active) return undefined;
-    const timer = setInterval(() => setNow(Date.now()), interval);
+    const timer = setInterval(() => setNow(serverNow()), interval);
     return () => clearInterval(timer);
   }, [active, interval]);
   return now;
@@ -201,7 +202,7 @@ const useGroupPickHost = ({ roomId, session, me, currentUser, roomMembers, onlin
   useEffect(() => {
     if (!isHost || session.status !== "building" || session.stage !== "checking") return;
     if (checkStartedAt.current?.sessionId !== session.sessionId) {
-      checkStartedAt.current = { sessionId: session.sessionId, at: Date.now() };
+      checkStartedAt.current = { sessionId: session.sessionId, at: serverNow() };
     }
     const participants = session.participants || {};
     const waiting = Object.entries(participants).filter(
@@ -239,7 +240,7 @@ const useGroupPickHost = ({ roomId, session, me, currentUser, roomMembers, onlin
 
   // voting: let late joiners in, and decide when it's time
   const decide = (forced = false) => {
-    const verdict = shouldFinalize({ session, now: Date.now(), onlineUids, roomMembers, forced });
+    const verdict = shouldFinalize({ session, now: serverNow(), onlineUids, roomMembers, forced });
     if (!verdict.finalize || !once("finalize")) return;
     (async () => {
       const members = (session.voters || []).filter((uid) => roomMembers.includes(uid));
