@@ -268,7 +268,7 @@ const useGroupPickHost = ({ roomId, session, me, currentUser, roomMembers, onlin
       try {
         explanation = await explainGroupPick({
           user: currentUser,
-          payload: explanationPayload({ item: pick.winner, result, usernames, chips, runnersUp: pick.runnersUp }),
+          payload: explanationPayload({ item: pick.winner, result, usernames, chips }),
         });
       } catch (error) {
         console.warn("Group Pick: Cue unavailable, using fallback line:", error.message);
@@ -398,6 +398,14 @@ export const Results = ({ session, usernames, isCreator, creatorName, onPlay, on
   const perMember = Object.entries(result.perMember || {});
   const yes = perMember.filter(([, entry]) => entry.vote === "yes").length;
   const rankingOf = (key) => (result.ranking || []).find((entry) => entry.key === key);
+  // Same measure as the winner's bars (taste fit), not the vote-weighted score,
+  // so the numbers on this screen can be compared with each other.
+  const lowestFitOf = (rank) => {
+    const fits = Object.values(rank?.perMember || {})
+      .map((entry) => entry.fit)
+      .filter((fit) => typeof fit === "number");
+    return fits.length ? Math.round(Math.min(...fits) * 100) : null;
+  };
 
   return (
     <div className="space-y-5">
@@ -463,12 +471,13 @@ export const Results = ({ session, usernames, isCreator, creatorName, onPlay, on
           <ul className="divide-y divide-white/[0.06] text-sm">
             {runnersUp.map((item) => {
               const rank = rankingOf(item.key);
+              const lowestFit = lowestFitOf(rank);
               return (
                 <li key={item.key} className="flex justify-between gap-3 py-1.5">
                   <span className="truncate text-textprimary">{item.title}</span>
                   {rank && (
                     <span className="shrink-0 tabular-nums text-textsecondary">
-                      {rank.yes} yes{rank.min !== null ? ` · lowest ${Math.round(rank.min * 100)}%` : ""}
+                      {rank.yes} yes{lowestFit !== null ? ` · lowest fit ${lowestFit}%` : ""}
                     </span>
                   )}
                 </li>

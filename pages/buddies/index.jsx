@@ -532,6 +532,15 @@ const BuddiesPage = () => {
   };
 
   // --- Render Logic ---
+  // Search hides you, your friends and people whose request is waiting for you.
+  // Keep the hidden ones too, so an empty list can say why it is empty.
+  const isHiddenFromSearch = (user) =>
+    user.uid === userId ||
+    friends.some((friend) => friend.uid === user.uid) ||
+    friendRequests.some((req) => req.fromUserId === user.uid);
+  const addableResults = searchResults.filter((user) => !isHiddenFromSearch(user));
+  const hiddenResults = searchResults.filter((user) => user.uid !== userId && isHiddenFromSearch(user));
+
   const renderTabContent = () => {
     // Use Themed Loader
     if (loading) {
@@ -659,25 +668,23 @@ const BuddiesPage = () => {
               className="w-full p-3 mb-6 bg-primary rounded-lg border border-secondary-light text-textprimary placeholder-textsecondary focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent" // Updated styles
             />
             {/* Display Search Results */}
-            {searchQuery.trim() && searchResults.length === 0 && (
+            {searchQuery.trim() && addableResults.length === 0 && (
               <p className="text-textsecondary text-center py-6 italic">
-                No users found matching "{searchQuery}".
+                {hiddenResults.length > 0
+                  ? `${hiddenResults
+                      .slice(0, 3)
+                      .map((user) => user.username)
+                      .join(", ")} ${
+                      hiddenResults.length === 1 ? "is" : "are"
+                    } already your friend${
+                      hiddenResults.length === 1 ? "" : "s"
+                    } or sent you a request. Check the Friends or Requests tab.`
+                  : `No users found matching "${searchQuery}".`}
               </p>
             )}
-            {searchResults.length > 0 && (
+            {addableResults.length > 0 && (
               <div className="space-y-2">
-                {" "}
-                {/* Reduced space slightly */}
-                {searchResults.map((user) => {
-                  const isFriend = friends.some(
-                    (friend) => friend.uid === user.uid
-                  );
-                  const hasIncomingRequest = friendRequests.some(
-                    (req) => req.fromUserId === user.uid
-                  );
-                  // Exclude self, friends, and those with pending incoming requests
-                  if (user.uid === userId || isFriend || hasIncomingRequest)
-                    return null;
+                {addableResults.map((user) => {
                   return (
                     <UserListItem
                       key={user.uid}

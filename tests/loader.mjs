@@ -3,6 +3,8 @@
 // and swaps Firebase, axios and localStorage helpers for inert stubs so no
 // test ever touches the network.
 const LIB_URL = new URL("../lib/", import.meta.url).href;
+// API routes are ES modules too; chat.js has no imports, so it loads as-is.
+const API_URL = new URL("../pages/api/", import.meta.url).href;
 
 const STUB =
   "data:text/javascript," +
@@ -29,7 +31,7 @@ export async function resolve(spec, ctx, next) {
 }
 
 export async function load(url, ctx, next) {
-  if (url.startsWith(LIB_URL)) {
+  if (url.startsWith(LIB_URL) || url.startsWith(API_URL)) {
     return { ...(await next(url, { ...ctx, format: "module" })), format: "module" };
   }
   return next(url, ctx);

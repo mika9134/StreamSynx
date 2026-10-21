@@ -325,24 +325,66 @@ const sanitizeGroupPick = (raw = {}) => ({
   year: clip(raw.year, 4),
   type: raw.mediaType === "tv" ? "series" : "film",
   genres: clipList(raw.genres, 4, 30),
-  overview: clip(raw.overview, 200),
   sharedTraits: clipList(raw.sharedTraits, 6, 40),
   members: (Array.isArray(raw.members) ? raw.members : []).slice(0, 12).map((member) => ({
     name: clip(member?.name, 30),
     fitPercent: Number.isFinite(member?.fit) ? Math.max(0, Math.min(100, Math.round(member.fit))) : null,
     vote: ["yes", "no"].includes(member?.vote) ? member.vote : null,
   })),
-  runnersUp: clipList(raw.runnersUp, 2, 120),
   method: raw.method === "fit-only" ? "fit-only" : "votes+fit",
 });
 
+// Facts as plain sentences: with JSON field names the model sometimes quoted
+// them back to users ("two of the three sharedTraits").
+const groupPickFacts = (pick) => {
+  const people = pick.members
+    .map((member) => {
+      const fit = member.fitPercent === null ? "taste unknown" : `taste fit ${member.fitPercent}%`;
+      const vote = member.vote ? `voted ${member.vote}` : "did not vote";
+      return `${member.name} (${fit}, ${vote})`;
+    })
+    .join("; ");
+  return [
+    `Title: ${pick.title}${pick.year ? ` (${pick.year})` : ""}, a ${pick.type}.`,
+    pick.genres.length ? `Genres: ${pick.genres.join(", ")}.` : null,
+    pick.sharedTraits.length
+      ? `Tastes everyone in the group shares: ${pick.sharedTraits.join(", ")}.`
+      : "Shared taste: none known. Do not say or suggest that the group shares any taste, interest or preference.",
+    people ? `People: ${people}.` : null,
+    pick.method === "fit-only" ? "Nobody voted, so it was picked on taste alone." : "Picked from votes and taste.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+};
+
 const groupPickPrompt = (name, pick) => `You are ${name}, the assistant inside StreamSynx. A group in a watch-party room just picked a ${pick.type} together. The rule: each title is scored by how happy its least-happy member would be (from their yes/no swipes and how well it fits their taste), so nobody gets stuck with something they hate.
 
-Write ONE sentence, at most ${GROUP_PICK_MAX_WORDS} words, telling the room why "${pick.title}"${pick.year ? ` (${pick.year})` : ""} is the fair pick. Mention a trait they share only if "sharedTraits" lists one; if it is empty, do not claim the group shares any taste or preference. If someone voted no, be honest about it. Use only the facts below: no other titles, no lists, no emojis.
+Write ONE sentence, at most ${GROUP_PICK_MAX_WORDS} words, telling the room why "${pick.title}" is the fair pick. If someone voted no, be honest about it. Use only the facts below, in everyday words: no other titles, no lists, no emojis, no counting of traits.
 
-Facts: ${JSON.stringify(pick)}
+${groupPickFacts(pick)}
 
 Reply with ONLY {"reply": "..."}. The first character must be "{".`;
+
+/**
+ * Why a reply can't be shown, or null when it's fine. Users see this line, so
+ * an invented shared taste or a leaked field name means falling back to the
+ * app's own sentence (fallbackExplanation in lib/groupPick.js).
+ */
+export const groupPickReplyProblem = (reply, pick) => {
+  const text = String(reply || "").trim();
+  if (!text) return "empty";
+  if (text.split(/\s+/).length > GROUP_PICK_MAX_WORDS + 6) return "too long";
+  // camelCase words like sharedTraits or fitPercent are field names, not English.
+  const withoutTitle = text.split(pick.title).join(" ");
+  if (/\b[a-z]+[A-Z][A-Za-z]*\b/.test(withoutTitle)) return "field name";
+  if (
+    !pick.sharedTraits.length &&
+    /\b(share|shares|shared|sharing|in common|mutual|common (interest|taste|love)|both (love|like|enjoy|prefer))\b/i.test(withoutTitle)
+  ) {
+    return "invented shared taste";
+  }
+  return null;
+};
 
 const explainGroupPick = async (req, res) => {
   const name = String(req.body.name || "Cue").slice(0, 40);
@@ -353,15 +395,25 @@ const explainGroupPick = async (req, res) => {
   }
   const origin = req.headers.origin || `https://${req.headers.host || "streamsynx.app"}`;
   try {
-    const { parsed, model } = await complete(
-      [
-        { role: "system", content: groupPickPrompt(name, pick) },
-        { role: "user", content: "Explain the pick." },
-      ],
-      origin,
-      { requirePicks: false, maxTokens: GROUP_PICK_MAX_TOKENS }
-    );
-    res.status(200).json({ reply: String(parsed.reply || "").trim().slice(0, 240), model });
+    // Two tries: models usually get it right, and the client has a fallback line.
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const { parsed, model } = await complete(
+        [
+          { role: "system", content: groupPickPrompt(name, pick) },
+          { role: "user", content: "Explain the pick." },
+        ],
+        origin,
+        { requirePicks: false, maxTokens: GROUP_PICK_MAX_TOKENS }
+      );
+      const reply = String(parsed.reply || "").trim().slice(0, 240);
+      const problem = groupPickReplyProblem(reply, pick);
+      if (!problem) {
+        res.status(200).json({ reply, model });
+        return;
+      }
+      console.warn(`Assistant: group pick reply rejected (${problem}): ${reply}`);
+    }
+    res.status(502).json({ error: "No explanation right now." });
   } catch (error) {
     console.error("Assistant: group pick explanation failed —", error.message);
     res.status(error.status === 429 ? 429 : 502).json({ error: "No explanation right now." });

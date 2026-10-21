@@ -11,6 +11,10 @@ const ChatInterface = ({ roomId }) => {
     const [newMessage, setNewMessage] = useState('');
     const [sending, setSending] = useState(false);
     const [usernameMap, setUsernameMap] = useState({}); // Stores uid -> username mappings
+    // Until the first snapshot arrives, an empty list means "still loading", not
+    // "no messages". A dropped Realtime Database connection can take ~20 s to recover.
+    const [loaded, setLoaded] = useState(false);
+    const [connected, setConnected] = useState(true);
     const currentUser = auth.currentUser;
     const messagesEndRef = useRef(null);
 
@@ -45,8 +49,11 @@ const ChatInterface = ({ roomId }) => {
 
         const messagesRef = ref(rtdb, `roomChats/${roomId}/messages`);
         const messagesQuery = query(messagesRef, orderByChild('timestamp'), limitToLast(100));
+        setLoaded(false);
+        let latest = 0;
 
         const unsubscribe = onValue(messagesQuery, async (snapshot) => {
+            const seq = ++latest;
             const messagesData = [];
             
             // First collect all messages and unique user IDs
@@ -68,12 +75,22 @@ const ChatInterface = ({ roomId }) => {
             );
             await Promise.all(usernameFetchPromises);
 
-            // Now set the messages with usernames
+            // A newer snapshot may have arrived while usernames loaded; keep the newest.
+            if (seq !== latest) return;
             setMessages(messagesData);
+            setLoaded(true);
         });
 
         return () => unsubscribe();
     }, [roomId]);
+
+    // Realtime Database connection state, so a dropped connection reads as
+    // "connecting" instead of an empty chat.
+    useEffect(() => {
+        return onValue(ref(rtdb, '.info/connected'), (snapshot) => {
+            setConnected(snapshot.val() === true);
+        });
+    }, []);
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
@@ -117,7 +134,12 @@ const ChatInterface = ({ roomId }) => {
             </h3>
             <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin scrollbar-thumb-secondary-light scrollbar-track-secondary">
                 {messages.length === 0 && (
-                    <p className="text-sm text-textsecondary text-center py-4">No messages yet. Start chatting!</p>
+                    <p className="text-sm text-textsecondary text-center py-4">
+                        {!connected ? 'Connecting to chat…' : !loaded ? 'Loading messages…' : 'No messages yet. Start chatting!'}
+                    </p>
+                )}
+                {messages.length > 0 && !connected && (
+                    <p className="text-xs text-textsecondary text-center">Reconnecting… new messages will appear shortly.</p>
                 )}
                 {messages.map(msg => {
                     if (msg.type === 'system') {

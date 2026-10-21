@@ -188,7 +188,7 @@ const GroupPickLab = () => {
     try {
       const explanation = await explainGroupPick({
         user,
-        payload: explanationPayload({ item: pick.winner, result: base, usernames, chips, runnersUp: pick.runnersUp }),
+        payload: explanationPayload({ item: pick.winner, result: base, usernames, chips }),
       });
       setResult({ ...base, explanation });
     } catch (error) {
